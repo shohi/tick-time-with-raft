@@ -1,16 +1,18 @@
-package main
+package store
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"os"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/hashicorp/raft"
+)
+
+const (
+	retainSnapshotCount = 2
+	raftTimeout         = 10 * time.Second
 )
 
 type Store struct {
@@ -20,10 +22,31 @@ type Store struct {
 	serverID    string
 	numericalID int
 	peersLength int
+	notifyCh    chan bool // TODO: watch leader change
+}
+
+func NewStore() *Store {
+	return &Store{numericalID: -1, peersLength: -1}
+}
+
+func (s *Store) Start() {
+	c := time.Tick(5 * time.Second)
+	go func() {
+		for range c {
+			confFuture := s.raft.GetConfiguration()
+			if err := confFuture.Error(); err != nil {
+				log.Printf("config error: %v", err)
+			} else {
+				conf := confFuture.Configuration()
+				log.Printf("state: %v, config => [%v]", s.raft.State(), conf)
+
+			}
+			// log.Printf("ticker ID %d of %d, count %d", s.numericalID, s.peersLength, count)
+		}
+	}()
 }
 
 func (s *Store) Open(enableSingle bool, localID string) error {
-
 	config := raft.DefaultConfig()
 	config.LocalID = raft.ServerID(localID)
 	s.serverID = localID
@@ -72,6 +95,7 @@ func (s *Store) Open(enableSingle bool, localID string) error {
 	return nil
 }
 
+// TODO: refactor error handling and logging
 func (s *Store) Join(nodeID, addr string) error {
 	log.Printf("received join request for remote node %s at %s", nodeID, addr)
 
@@ -107,99 +131,53 @@ func (s *Store) Join(nodeID, addr string) error {
 	return nil
 }
 
-func (s *Store) start() {
-	c := time.Tick(1 * time.Second)
-	count := 0
-	go func() {
-		for range c {
-			mod := count % s.peersLength
-			if mod == s.numericalID {
-				log.Printf("ticker ID %d of %d, count %d", s.numericalID, s.peersLength, count)
+func (s *Store) Remove(nodeID string) error {
+	log.Printf("received remove request for remote node %s", nodeID)
+
+	configFuture := s.raft.GetConfiguration()
+	if err := configFuture.Error(); err != nil {
+		err = fmt.Errorf("failed to get raft confgiuration: %w", err)
+		log.Printf("%v", err)
+		return err
+	}
+
+	var found = false
+	var err error
+	for _, srv := range configFuture.Configuration().Servers {
+		if srv.ID == raft.ServerID(nodeID) {
+			found = true
+			future := s.raft.RemoveServer(srv.ID, 0, 0)
+			err = future.Error()
+			if err != nil {
+				err = fmt.Errorf("removing existing node %s: %w", nodeID, err)
 			}
-			count++
 		}
-	}()
-}
+	}
 
-func newStore() *Store {
-	return &Store{numericalID: -1, peersLength: -1}
-}
-
-type fsm Store
-
-func (f *fsm) Apply(l *raft.Log) interface{} {
-
-	//log.Printf("apply [%v] [%v]", l, l.Data)
-
-	stats := f.raft.Stats()
-
-	config := stats["latest_configuration"]
-
-	peers := peersList(config)
-	f.peersLength = len(peers)
-
-	ID := f.serverID
-	f.numericalID = getNumericalID(ID, peers)
-
-	log.Printf("apply ID [%s] [%d]", ID, f.numericalID)
-
-	return nil
-}
-
-func (f *fsm) Snapshot() (raft.FSMSnapshot, error) {
-
-	log.Printf("snapshot")
-
-	return &fsmSnapshot{}, nil
-}
-
-func (f *fsm) Restore(rc io.ReadCloser) error {
-
-	log.Printf("restore [%v]", rc)
-
-	return nil
-}
-
-type fsmSnapshot struct {
-}
-
-func (f *fsmSnapshot) Persist(sink raft.SnapshotSink) error {
-	err := func() error {
-		b := []byte("hello from persist")
-
-		if _, err := sink.Write(b); err != nil {
-			return err
-		}
-
-		return sink.Close()
-	}()
+	if !found {
+		err = fmt.Errorf("no node %s", nodeID)
+	}
 
 	if err != nil {
-		sink.Cancel()
+		log.Printf("%v", err)
+	} else {
+		log.Printf("removing existing node %s successfully", nodeID)
 	}
 
 	return err
 }
 
-func (f *fsmSnapshot) Release() {}
+func (s *Store) Shutdown() error {
+	// TODO: redirect to leader
+	s.raft.Leader()
+	future := s.raft.Shutdown()
+	err := future.Error()
 
-func getNumericalID(ID string, peers []string) int {
-	for i, value := range peers {
-		if value == ID {
-			return i
-		}
-	}
-	return -1
-}
-
-func peersList(rawConfig string) []string {
-	peers := []string{}
-
-	re := regexp.MustCompile(`ID:[0-9A-z]*`)
-
-	for _, peer := range re.FindAllString(rawConfig, -1) {
-		peers = append(peers, strings.Replace(peer, "ID:", "", -1))
+	if err != nil {
+		err = fmt.Errorf("shutting down node %s: %w", s.serverID, err)
+		log.Printf("%v", err)
+		return err
 	}
 
-	return peers
+	return nil
 }

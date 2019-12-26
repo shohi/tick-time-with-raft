@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -9,31 +8,31 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"time"
+
+	"github.com/juanpabloaj/rafttick/server"
+	"github.com/juanpabloaj/rafttick/store"
 )
 
 const (
-	DefaultHTTPAddr = ":11000"
-	DefaultRaftAddr = ":12000"
-)
-
-const (
-	retainSnapshotCount = 2
-	raftTimeout         = 10 * time.Second
+	DefaultHTTPAddr = ":9001"
+	DefaultRaftAddr = ":6001"
 )
 
 var (
 	httpAddr string
-	raftAddr string
 	joinAddr string
 	nodeID   string
+	raftAddr string
+	raftDir  string
 )
 
 func init() {
-	flag.StringVar(&httpAddr, "haddr", DefaultHTTPAddr, "Set the HTTP bind address")
-	flag.StringVar(&raftAddr, "raddr", DefaultRaftAddr, "Set Raft bind address")
+	flag.StringVar(&httpAddr, "addr", DefaultHTTPAddr, "Set the HTTP bind address")
 	flag.StringVar(&joinAddr, "join", "", "Set join address, if any")
-	flag.StringVar(&nodeID, "id", "", "Node ID")
+
+	flag.StringVar(&nodeID, "id", "", "raft Node ID")
+	flag.StringVar(&raftAddr, "raft-addr", DefaultRaftAddr, "Set Raft bind address")
+	flag.StringVar(&raftDir, "raft-dir", "", "raft dir")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] \n", os.Args[0])
 		flag.PrintDefaults()
@@ -43,20 +42,17 @@ func init() {
 func main() {
 	flag.Parse()
 
-	if flag.NArg() == 0 {
-		fmt.Fprintf(os.Stderr, "No raft storage directory specified\n")
-		os.Exit(1)
+	if nodeID == "" {
+		log.Fatal("node id must be set")
 	}
 
-	raftDir := flag.Arg(0)
 	if raftDir == "" {
-		fmt.Fprintf(os.Stderr, "No Raft storage directory specified\n")
-		os.Exit(1)
+		log.Fatal("raft dir must be set")
 	}
 
 	os.MkdirAll(raftDir, 0700)
 
-	s := newStore()
+	s := store.NewStore()
 
 	s.RaftDir = raftDir
 	s.RaftBind = raftAddr
@@ -64,11 +60,11 @@ func main() {
 	if err := s.Open(joinAddr == "", nodeID); err != nil {
 		log.Fatalf("%v", err)
 	}
-	s.start()
+	s.Start()
 
-	service := newService(httpAddr, *s)
+	service := server.NewService(httpAddr, *s)
 	if err := service.Start(); err != nil {
-		log.Fatal("failed to start HTTP service: %s", err.Error())
+		log.Fatalf("failed to start HTTP service: %s", err.Error())
 	}
 
 	if joinAddr != "" {
@@ -91,12 +87,19 @@ func join(joinAddr, raftAddr, nodeID string) error {
 		return err
 	}
 
-	resp, err := http.Post(fmt.Sprintf("http://%s/join", joinAddr),
-		"application-type/json", bytes.NewReader(b))
+	log.Printf("join cluster => [%v]", string(b))
+
+	urlPath := fmt.Sprintf("http://%s/join?id=%s&addr=%s",
+		joinAddr, nodeID, raftAddr)
+
+	resp, err := http.Post(urlPath, "application-type/json", nil)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+
+	if resp != nil && resp.Body != nil {
+		resp.Body.Close()
+	}
 
 	return nil
 }

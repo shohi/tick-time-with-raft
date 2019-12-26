@@ -1,30 +1,33 @@
 # Tick time with Raft
 
-Every server runs the same time tick, but based on his ID, every server only shows some seconds marks in the log.
+Every server runs the same time tick, but based on its ID, every server only shows some seconds marks in the log.
 
 Every node contains all the information but the responsibility of show to the log (the execution) is distributed.
 
-When a new server is added the responsibility is redistributed.
+When a new server is added the responsibility is redistributed. (TODO: update)
 
-Start leader
+**Start leader**
 
-    go run . -id node0 raft0
+```bash
+# node a
+go run main.go -id a -raft-dir tmp/node_a -raft-addr :6001 -addr :9001
 
-Start peers
+```
 
-    go run . -id node1 -haddr :11001 -raddr :12001 -join :11000 raft1
-    go run . -id node2 -haddr :11002 -raddr :12002 -join :11000 raft2
+**Start peers**
 
-![gif](https://i.imgur.com/clIlmcL.gif)
+```bash
 
-Based on
+# node b
+go run main.go -id b -raft-dir tmp/node_b -raft-addr :6002 -addr :9002 -join :9001
 
-https://github.com/otoolep/hraftd
+# node c
+go run main.go -id c -raft-dir tmp/node_c -raft-addr :6003 -addr :9003 -join :9001
 
-Using hashicorp/raft
+```
 
-https://github.com/hashicorp/raft
+## Reference
 
-Raft description
-
-https://raft.github.io/
+1. Go raft library, https://github.com/hashicorp/raft
+2. Raft description, https://raft.github.io/
+3. Using hashicorp/raft, https://github.com/otoolep/hraftd
