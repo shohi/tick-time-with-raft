@@ -1,9 +1,11 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"time"
 
@@ -21,6 +23,7 @@ type Options struct {
 	ServerID string
 
 	Bootstrap bool
+	HTTPAddr  string
 }
 
 type Store struct {
@@ -57,7 +60,57 @@ func (s *Store) Start() {
 	}()
 }
 
+func (s *Store) raftServerAddr() string {
+	return fmt.Sprintf("%s@%s", s.opts.HTTPAddr, s.opts.RaftBind)
+}
+
 func (s *Store) Open() error {
+	config := raft.DefaultConfig()
+	config.LocalID = raft.ServerID(s.opts.ServerID)
+
+	log.Printf("Open, local ID [%v]", config.LocalID)
+
+	serverAddr := s.raftServerAddr()
+
+	transport, err := newIntTransport(serverAddr, 10*time.Second)
+	if err != nil {
+		return err
+	}
+
+	snapshots, err := raft.NewFileSnapshotStore(s.opts.RaftDir, retainSnapshotCount, os.Stderr)
+	if err != nil {
+		return fmt.Errorf("file snapshot store: %s", err)
+	}
+
+	var logStore raft.LogStore
+	var stableStore raft.StableStore
+
+	logStore = raft.NewInmemStore()
+	stableStore = raft.NewInmemStore()
+
+	ra, err := raft.NewRaft(config, (*fsm)(s), logStore, stableStore, snapshots, transport)
+	if err != nil {
+		return fmt.Errorf("new raft: %s", err)
+	}
+	s.raft = ra
+
+	if s.opts.Bootstrap {
+		configuration := raft.Configuration{
+			Servers: []raft.Server{
+				{
+					ID:      config.LocalID,
+					Address: raft.ServerAddress(serverAddr),
+				},
+			},
+		}
+		ra.BootstrapCluster(configuration)
+	}
+
+	return nil
+}
+
+// Deprecated.
+func (s *Store) OpenXXX() error {
 	config := raft.DefaultConfig()
 	config.LocalID = raft.ServerID(s.opts.ServerID)
 
@@ -178,9 +231,34 @@ func (s *Store) Remove(nodeID string) error {
 }
 
 func (s *Store) Shutdown() error {
-	// TODO: redirect to leader
+	// TODO: send remove server request to leader node.
+	// first remove peers
+	// check current node is leader
+	leader := s.raft.Leader()
+
+	httpAddr, _ := splitAddr(string(leader))
+	reqPath := fmt.Sprintf("http://%s/remove?id=%s", httpAddr, s.opts.ServerID)
+	resp, err := http.Post(reqPath, "text/plain", nil)
+
+	if resp != nil && resp.Body != nil {
+		defer resp.Body.Close()
+	}
+
+	if err != nil {
+		return err
+	}
+
+	statusCode := resp.StatusCode
+	if statusCode != http.StatusOK &&
+		statusCode != http.StatusNoContent {
+
+		msg := fmt.Sprintf("response status for remove request is %v, not 200/204", statusCode)
+
+		return errors.New(msg)
+	}
+
 	future := s.raft.Shutdown()
-	err := future.Error()
+	err = future.Error()
 
 	if err != nil {
 		err = fmt.Errorf("shutting down node %s: %w", s.opts.ServerID, err)

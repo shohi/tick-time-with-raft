@@ -12,8 +12,9 @@ import (
 )
 
 type Options struct {
-	Store store.Store
-	Addr  string
+	ServerID string
+	Addr     string
+	Store    store.Store
 }
 
 type Service struct {

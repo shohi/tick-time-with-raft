@@ -56,6 +56,7 @@ func createStore() store.Store {
 		RaftBind:  raftAddr,
 		ServerID:  nodeID,
 		Bootstrap: joinAddr == "",
+		HTTPAddr:  httpAddr,
 	})
 
 	if err := s.Open(); err != nil {
@@ -67,20 +68,21 @@ func createStore() store.Store {
 }
 
 func createServerAndJoin(s store.Store) *server.Service {
-	service := server.NewService(server.Options{
-		Addr:  httpAddr,
-		Store: s,
+	svc := server.NewService(server.Options{
+		ServerID: nodeID,
+		Addr:     httpAddr,
+		Store:    s,
 	})
-	if err := service.Start(); err != nil {
+	if err := svc.Start(); err != nil {
 		log.Fatalf("failed to start HTTP service: %s", err.Error())
 	}
 
-	if err := server.Join(joinAddr, raftAddr, nodeID); err != nil {
+	if err := svc.Join(joinAddr, raftAddr); err != nil {
 		log.Fatalf("failed to join node at %s: %s", joinAddr, err.Error())
 
 	}
 
-	return service
+	return svc
 }
 
 func main() {
