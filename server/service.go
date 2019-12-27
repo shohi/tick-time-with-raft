@@ -33,6 +33,8 @@ func (s *Service) Start() error {
 	// TODO
 	router.HandleFunc("/shutdown", s.handleShutdown)
 
+	router.HandleFunc("/leader", s.handleLeader)
+
 	go func() {
 		log.Printf("listening on %s ...", s.addr)
 		http.ListenAndServe(s.addr, router)
@@ -105,4 +107,9 @@ func (s *Service) handleShutdown(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(msg))
 
 	close(s.stopCh)
+}
+
+func (s *Service) handleLeader(w http.ResponseWriter, r *http.Request) {
+	leader := s.store.Leader()
+	fmt.Fprintf(w, "%s", leader)
 }

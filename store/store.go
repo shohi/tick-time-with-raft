@@ -169,7 +169,6 @@ func (s *Store) Remove(nodeID string) error {
 
 func (s *Store) Shutdown() error {
 	// TODO: redirect to leader
-	s.raft.Leader()
 	future := s.raft.Shutdown()
 	err := future.Error()
 
@@ -180,4 +179,8 @@ func (s *Store) Shutdown() error {
 	}
 
 	return nil
+}
+
+func (s *Store) Leader() string {
+	return string(s.raft.Leader())
 }
