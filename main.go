@@ -1,11 +1,9 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 
@@ -39,9 +37,7 @@ func init() {
 	}
 }
 
-func main() {
-	flag.Parse()
-
+func validate() {
 	if nodeID == "" {
 		log.Fatal("node id must be set")
 	}
@@ -51,55 +47,51 @@ func main() {
 	}
 
 	os.MkdirAll(raftDir, 0700)
+}
 
-	s := store.NewStore()
+func createStore() store.Store {
 
-	s.RaftDir = raftDir
-	s.RaftBind = raftAddr
+	s := store.NewStoreWithOptions(store.Options{
+		RaftDir:   raftDir,
+		RaftBind:  raftAddr,
+		ServerID:  nodeID,
+		Bootstrap: joinAddr == "",
+	})
 
-	if err := s.Open(joinAddr == "", nodeID); err != nil {
+	if err := s.Open(); err != nil {
 		log.Fatalf("%v", err)
 	}
 	s.Start()
 
-	service := server.NewService(httpAddr, *s)
+	return *s
+}
+
+func createServerAndJoin(s store.Store) *server.Service {
+	service := server.NewService(server.Options{
+		Addr:  httpAddr,
+		Store: s,
+	})
 	if err := service.Start(); err != nil {
 		log.Fatalf("failed to start HTTP service: %s", err.Error())
 	}
 
-	if joinAddr != "" {
-		if err := join(joinAddr, raftAddr, nodeID); err != nil {
-			log.Fatalf("failed to join node at %s: %s", joinAddr, err.Error())
-		}
+	if err := server.Join(joinAddr, raftAddr, nodeID); err != nil {
+		log.Fatalf("failed to join node at %s: %s", joinAddr, err.Error())
+
 	}
 
+	return service
+}
+
+func main() {
+	flag.Parse()
+	validate()
+
+	_ = createServerAndJoin(createStore())
 	log.Println("started successfully ...")
 
 	terminate := make(chan os.Signal, 1)
 	signal.Notify(terminate, os.Interrupt)
 	<-terminate
 	log.Println("exiting ...")
-}
-
-func join(joinAddr, raftAddr, nodeID string) error {
-	b, err := json.Marshal(map[string]string{"addr": raftAddr, "id": nodeID})
-	if err != nil {
-		return err
-	}
-
-	log.Printf("join cluster => [%v]", string(b))
-
-	urlPath := fmt.Sprintf("http://%s/join?id=%s&addr=%s",
-		joinAddr, nodeID, raftAddr)
-
-	resp, err := http.Post(urlPath, "application-type/json", nil)
-	if err != nil {
-		return err
-	}
-
-	if resp != nil && resp.Body != nil {
-		resp.Body.Close()
-	}
-
-	return nil
 }

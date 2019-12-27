@@ -22,7 +22,7 @@ func (f *fsm) Apply(l *raft.Log) interface{} {
 	peers := peersList(config)
 	f.peersLength = len(peers)
 
-	ID := f.serverID
+	ID := f.opts.ServerID
 	f.numericalID = getNumericalID(ID, peers)
 
 	log.Printf("apply ID [%s] [%d], content: [%s]", ID, f.numericalID, string(l.Data))

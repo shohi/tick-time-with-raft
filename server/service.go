@@ -11,16 +11,20 @@ import (
 	"github.com/juanpabloaj/rafttick/store"
 )
 
+type Options struct {
+	Store store.Store
+	Addr  string
+}
+
 type Service struct {
-	addr   string
-	store  store.Store
+	opts Options
+
 	stopCh chan struct{}
 }
 
-func NewService(addr string, store store.Store) *Service {
+func NewService(opts Options) *Service {
 	return &Service{
-		addr:   addr,
-		store:  store,
+		opts:   opts,
 		stopCh: make(chan struct{}),
 	}
 }
@@ -36,8 +40,8 @@ func (s *Service) Start() error {
 	router.HandleFunc("/leader", s.handleLeader)
 
 	go func() {
-		log.Printf("listening on %s ...", s.addr)
-		http.ListenAndServe(s.addr, router)
+		log.Printf("listening on %s ...", s.opts.Addr)
+		http.ListenAndServe(s.opts.Addr, router)
 	}()
 
 	go func() {
@@ -62,7 +66,7 @@ func (s *Service) handleJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.store.Join(nodeID, raftAddr); err != nil {
+	if err := s.opts.Store.Join(nodeID, raftAddr); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(err.Error()))
 		return
@@ -81,7 +85,7 @@ func (s *Service) handleRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.store.Remove(nodeID); err != nil {
+	if err := s.opts.Store.Remove(nodeID); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(err.Error()))
 		return
@@ -94,7 +98,7 @@ func (s *Service) handleRemove(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleShutdown(w http.ResponseWriter, r *http.Request) {
-	err := s.store.Shutdown()
+	err := s.opts.Store.Shutdown()
 
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -110,6 +114,6 @@ func (s *Service) handleShutdown(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleLeader(w http.ResponseWriter, r *http.Request) {
-	leader := s.store.Leader()
+	leader := s.opts.Store.Leader()
 	fmt.Fprintf(w, "%s", leader)
 }

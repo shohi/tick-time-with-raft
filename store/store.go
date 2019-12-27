@@ -15,18 +15,29 @@ const (
 	raftTimeout         = 10 * time.Second
 )
 
+type Options struct {
+	RaftDir  string
+	RaftBind string
+	ServerID string
+
+	Bootstrap bool
+}
+
 type Store struct {
-	RaftDir     string
-	RaftBind    string
+	opts Options
+
 	raft        *raft.Raft
-	serverID    string
 	numericalID int
 	peersLength int
 	notifyCh    chan bool // TODO: watch leader change
 }
 
-func NewStore() *Store {
-	return &Store{numericalID: -1, peersLength: -1}
+func NewStoreWithOptions(opts Options) *Store {
+	return &Store{
+		opts:        opts,
+		numericalID: -1,
+		peersLength: -1,
+	}
 }
 
 func (s *Store) Start() {
@@ -46,24 +57,23 @@ func (s *Store) Start() {
 	}()
 }
 
-func (s *Store) Open(enableSingle bool, localID string) error {
+func (s *Store) Open() error {
 	config := raft.DefaultConfig()
-	config.LocalID = raft.ServerID(localID)
-	s.serverID = localID
+	config.LocalID = raft.ServerID(s.opts.ServerID)
 
 	log.Printf("Open, local ID [%v]", config.LocalID)
 
-	addr, err := net.ResolveTCPAddr("tcp", s.RaftBind)
+	addr, err := net.ResolveTCPAddr("tcp", s.opts.RaftBind)
 	if err != nil {
 		return err
 	}
 
-	transport, err := raft.NewTCPTransport(s.RaftBind, addr, 3, 10*time.Second, os.Stderr)
+	transport, err := raft.NewTCPTransport(s.opts.RaftBind, addr, 3, 10*time.Second, os.Stderr)
 	if err != nil {
 		return err
 	}
 
-	snapshots, err := raft.NewFileSnapshotStore(s.RaftDir, retainSnapshotCount, os.Stderr)
+	snapshots, err := raft.NewFileSnapshotStore(s.opts.RaftDir, retainSnapshotCount, os.Stderr)
 	if err != nil {
 		return fmt.Errorf("file snapshot store: %s", err)
 	}
@@ -80,7 +90,7 @@ func (s *Store) Open(enableSingle bool, localID string) error {
 	}
 	s.raft = ra
 
-	if enableSingle {
+	if s.opts.Bootstrap {
 		configuration := raft.Configuration{
 			Servers: []raft.Server{
 				{
@@ -173,7 +183,7 @@ func (s *Store) Shutdown() error {
 	err := future.Error()
 
 	if err != nil {
-		err = fmt.Errorf("shutting down node %s: %w", s.serverID, err)
+		err = fmt.Errorf("shutting down node %s: %w", s.opts.ServerID, err)
 		log.Printf("%v", err)
 		return err
 	}
